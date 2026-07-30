@@ -232,7 +232,7 @@ graph TD
 
 ### 前置要求
 
-- Go `1.25` 或更高版本（也可直接从 [Releases](https://github.com/SleepingBag945/notion_manager/releases) 下载预编译二进制，无需安装 Go 工具链）
+- Go `1.25` 或更高版本（也可直接从 [Releases](https://github.com/s3al4er/notion_mgr/releases) 下载预编译二进制，无需安装 Go 工具链）
 - Chrome / Chromium，用于加载扩展并提取账号（如果你只用 Dashboard 加号或批量注册，可跳过）
 - 至少一个可用的 Notion 账号
 
