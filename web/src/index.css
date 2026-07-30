@@ -43,6 +43,25 @@ body {
   border-radius: 4px;
 }
 
+/* Grid shader background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Ensure main content appears above the grid */
+#root {
+  position: relative;
+  z-index: 1;
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
 }

@@ -3,7 +3,7 @@ import { initReactI18next } from 'react-i18next';
 import zh from './locales/zh.json';
 import en from './locales/en.json';
 
-const savedLang = localStorage.getItem('notion-manager-lang') ?? 'zh';
+const savedLang = localStorage.getItem('notion-manager-lang') ?? 'en';
 
 i18n
   .use(initReactI18next)
@@ -13,7 +13,7 @@ i18n
       en: { translation: en }
     },
     lng: savedLang,
-    fallbackLng: 'zh',
+    fallbackLng: 'en',
     interpolation: {
       escapeValue: false // react already safes from xss
     }

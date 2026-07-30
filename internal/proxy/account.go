@@ -854,6 +854,15 @@ func (p *AccountPool) HasNoWorkspace(acc *Account) bool {
 	return p.hasNoWorkspace(acc)
 }
 
+// ForEach iterates over all accounts with a read lock held.
+func (p *AccountPool) ForEach(fn func(*Account)) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	for _, acc := range p.accounts {
+		fn(acc)
+	}
+}
+
 func (p *AccountPool) AllModels() []ModelEntry {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

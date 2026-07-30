@@ -31,6 +31,10 @@ func TestRequiresAPIKey(t *testing.T) {
 }
 
 func TestAPIKeyAuthMiddleware_ProtectsModelsRoutes(t *testing.T) {
+	proxy.AppConfig = proxy.DefaultConfig()
+	proxy.AppConfig.Server.ApiKey = "sk-test"
+	proxy.AppConfig.Server.ApiKeys = []string{"sk-test"}
+	t.Cleanup(func() { proxy.AppConfig = nil })
 	handler := apiKeyAuthMiddleware("sk-test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -66,6 +70,12 @@ func TestAPIKeyAuthMiddleware_ProtectsModelsRoutes(t *testing.T) {
 }
 
 func TestNewMux_RegistersModelsRoutes(t *testing.T) {
+	originalConfig := proxy.AppConfig
+	proxy.AppConfig = proxy.DefaultConfig()
+	proxy.AppConfig.Server.ApiKey = "sk-test"
+	proxy.AppConfig.Server.ApiKeys = []string{"sk-test"}
+	t.Cleanup(func() { proxy.AppConfig = originalConfig })
+
 	original := proxy.SnapshotModelMap()
 	proxy.ReplaceModelMap(map[string]string{
 		"opus-4.6": "avocado-froyo-medium",
@@ -78,7 +88,7 @@ func TestNewMux_RegistersModelsRoutes(t *testing.T) {
 	dashAuth := proxy.NewDashboardAuth("", "sk-test")
 	usageStats := proxy.InitUsageStats("")
 	regDeps := &proxy.RegisterJobsDeps{Pool: pool, AccountsDir: "", Auth: dashAuth}
-	mux := newMux(pool, "", "sk-test", dashAuth, usageStats, regDeps)
+	mux := newMux(pool, "", "sk-test", "", dashAuth, usageStats, regDeps)
 	handler := apiKeyAuthMiddleware("sk-test", mux)
 
 	for _, path := range []string{"/v1/models", "/models"} {
@@ -104,7 +114,7 @@ func TestNewMux_RegistersOpenAIRoutes(t *testing.T) {
 	dashAuth := proxy.NewDashboardAuth("", "sk-test")
 	usageStats := proxy.InitUsageStats("")
 	regDeps := &proxy.RegisterJobsDeps{Pool: pool, AccountsDir: "", Auth: dashAuth}
-	mux := newMux(pool, "", "sk-test", dashAuth, usageStats, regDeps)
+	mux := newMux(pool, "", "sk-test", "", dashAuth, usageStats, regDeps)
 	handler := apiKeyAuthMiddleware("sk-test", mux)
 
 	tests := []struct {

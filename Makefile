@@ -1,40 +1,31 @@
-.PHONY: build run clean test web web-install
+.PHONY: build run clean test web web-install vet
 
-# Binary name
 BINARY=notion-manager
 
-# Build frontend and backend
 build: web
-	go build -o $(BINARY).exe ./cmd/notion-manager/
+	go build -o $(BINARY) ./cmd/notion-manager/
 
-# Build backend only (skip frontend)
 build-go:
-	go build -o $(BINARY).exe ./cmd/notion-manager/
+	go build -o $(BINARY) ./cmd/notion-manager/
 
-# Run the proxy
-run: build
-	./$(BINARY).exe
+run:
+	go run ./cmd/notion-manager/
 
-# Install frontend dependencies
 web-install:
 	cd web && npm install
 
-# Build frontend and copy to embed directory
 web:
 	cd web && npm run build
-	cmd /c "if exist internal\web\dist rmdir /s /q internal\web\dist"
-	cmd /c "xcopy web\dist internal\web\dist\ /E /I /Y /Q"
+	rm -rf internal/web/dist
+	cp -r web/dist internal/web/dist
 
-# Clean build artifacts
 clean:
-	del /f $(BINARY).exe 2>nul || true
-	-rmdir /s /q web\dist 2>nul
-	-rmdir /s /q internal\web\dist 2>nul
+	rm -f $(BINARY)
+	rm -rf web/dist
+	rm -rf internal/web/dist
 
-# Run tests
 test:
 	go test ./...
 
-# Check code
 vet:
 	go vet ./...

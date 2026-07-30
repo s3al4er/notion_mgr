@@ -256,6 +256,11 @@ export interface SearchSettings {
   // field via /admin/settings PUT immediately drops idle pooled
   // connections so subsequent requests pick up the new upstream.
   notion_proxy: string
+  keyless_endpoint: boolean
+  require_api_key_for_models: boolean
+  theme_bg_color: string
+  theme_text_color: string
+  theme_sidebar_color: string
 }
 
 export async function fetchSettings(): Promise<SearchSettings> {
@@ -265,7 +270,7 @@ export async function fetchSettings(): Promise<SearchSettings> {
   return resp.json()
 }
 
-export async function updateSettings(settings: Partial<Pick<SearchSettings, 'enable_web_search' | 'enable_workspace_search' | 'ask_mode_default' | 'debug_logging' | 'notion_proxy'>>): Promise<SearchSettings> {
+export async function updateSettings(settings: Partial<SearchSettings>): Promise<SearchSettings> {
   // Uses dashboard session cookie for auth (not API key)
   const resp = await fetch('/admin/settings', {
     method: 'PUT',
@@ -376,4 +381,106 @@ export function openJobStream(id: string): EventSource {
   // EventSource always sends cookies on same-origin requests, no extra opts
   // are required for the dashboard session.
   return new EventSource(jobEventsUrl(id))
+}
+
+// --- API Key Management ---
+
+export interface ApiKeyEntry {
+  id: string
+  key: string
+  masked: string
+}
+
+export async function fetchApiKeys(): Promise<ApiKeyEntry[]> {
+  const resp = await fetch('/admin/api-keys', {
+    credentials: 'same-origin',
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  const data = await resp.json()
+  return data.keys || []
+}
+
+export async function generateApiKey(): Promise<string> {
+  const resp = await fetch('/admin/api-keys', {
+    method: 'POST',
+    credentials: 'same-origin',
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  const data = await resp.json()
+  return data.key
+}
+
+export async function deleteApiKey(key: string): Promise<void> {
+  const resp = await fetch('/admin/api-keys', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ key }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    let msg = `HTTP ${resp.status}`
+    try { const d = JSON.parse(text); if (d.error) msg = d.error } catch {}
+    throw new Error(msg)
+  }
+}
+
+// --- Account Tokens ---
+
+export interface TokenEntry {
+  account_id: string
+  email: string
+  name: string
+  token_v2: string
+}
+
+export async function fetchAccountTokens(): Promise<TokenEntry[]> {
+  const resp = await fetch('/admin/accounts/tokens', {
+    credentials: 'same-origin',
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  const data = await resp.json()
+  return data.tokens || []
+}
+
+// --- Password Change ---
+
+export async function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  const { salt } = await fetchSalt()
+  const hash = await sha256hex(salt + oldPassword)
+  const resp = await fetch('/admin/settings/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ old_password: hash, new_password: newPassword }),
+  })
+  if (!resp.ok) {
+    const text = await resp.text()
+    let msg = `HTTP ${resp.status}`
+    try { const d = JSON.parse(text); if (d.error) msg = d.error } catch {}
+    throw new Error(msg)
+  }
+}
+
+// --- Model Aliases API ---
+
+export async function fetchModelAliases(): Promise<Record<string, string>> {
+  const resp = await fetch('/admin/models/aliases', {
+    credentials: 'same-origin',
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  const data = await resp.json()
+  return data.aliases || {}
+}
+
+export async function updateModelAliases(aliases: Record<string, string>): Promise<Record<string, string>> {
+  const resp = await fetch('/admin/models/aliases', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ aliases }),
+  })
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+  const data = await resp.json()
+  return data.aliases || {}
 }

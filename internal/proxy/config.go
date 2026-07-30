@@ -25,22 +25,26 @@ type Config struct {
 	Refresh  RefreshConfig     `yaml:"refresh"`
 	Browser  BrowserConfig     `yaml:"browser"`
 	Register RegisterConfig    `yaml:"register"`
+	Theme    ThemeConfig       `yaml:"theme"`
 	ModelMap map[string]string `yaml:"model_map"`
 }
 
 type ServerConfig struct {
-	Port          string `yaml:"port"`
-	AccountsDir   string `yaml:"accounts_dir"`
-	TokenFile     string `yaml:"token_file"`
-	ApiKey        string `yaml:"api_key"`
-	AdminPassword string `yaml:"admin_password"`
-	LogFile       string `yaml:"log_file"`
-	DebugLogging  bool   `yaml:"debug_logging"`
-	APILogInput   bool   `yaml:"api_log_input"`
-	APILogOutput  bool   `yaml:"api_log_output"`
-	NotionLogReq  bool   `yaml:"notion_log_request"`
-	NotionLogResp bool   `yaml:"notion_log_response"`
-	DumpAPIInput  bool   `yaml:"dump_api_input"`
+	Port                  string `yaml:"port"`
+	AccountsDir           string `yaml:"accounts_dir"`
+	TokenFile             string `yaml:"token_file"`
+	ApiKey                string   `yaml:"api_key"`
+	ApiKeys               []string `yaml:"api_keys"`
+	AdminPassword         string   `yaml:"admin_password"`
+	LogFile               string `yaml:"log_file"`
+	DebugLogging          bool   `yaml:"debug_logging"`
+	APILogInput           bool   `yaml:"api_log_input"`
+	APILogOutput          bool   `yaml:"api_log_output"`
+	NotionLogReq          bool   `yaml:"notion_log_request"`
+	NotionLogResp         bool   `yaml:"notion_log_response"`
+	DumpAPIInput          bool   `yaml:"dump_api_input"`
+	KeylessEndpoint       bool   `yaml:"keyless_endpoint"`
+	RequireApiKeyForModels bool  `yaml:"require_api_key_for_models"`
 }
 
 type ProxyConfig struct {
@@ -105,6 +109,12 @@ type RegisterConfig struct {
 	DefaultConcurrency int `yaml:"default_concurrency"`
 }
 
+type ThemeConfig struct {
+	BgColor      string `yaml:"bg_color"`
+	TextColor    string `yaml:"text_color"`
+	SidebarColor string `yaml:"sidebar_color"`
+}
+
 // AppConfig is the global configuration instance
 var AppConfig *Config
 
@@ -112,16 +122,18 @@ var AppConfig *Config
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port:          "8081",
-			AccountsDir:   "accounts",
-			TokenFile:     "token.txt",
-			ApiKey:        "",
-			LogFile:       "",
-			DebugLogging:  true,
-			APILogInput:   false,
-			APILogOutput:  false,
-			NotionLogReq:  false,
-			NotionLogResp: false,
+			Port:                  "8081",
+			AccountsDir:           "accounts",
+			TokenFile:             "token.txt",
+			ApiKey:                "",
+			LogFile:               "",
+			DebugLogging:          true,
+			APILogInput:           false,
+			APILogOutput:          false,
+			NotionLogReq:          false,
+			NotionLogResp:         false,
+			KeylessEndpoint:       false,
+			RequireApiKeyForModels: true,
 		},
 		Proxy: ProxyConfig{
 			NotionAPIBase:         "https://www.notion.so/api/v3",
@@ -152,6 +164,11 @@ func DefaultConfig() *Config {
 			HistoryFile:        "accounts/.register_history.json",
 			HistoryMemoryCap:   100,
 			DefaultConcurrency: 1,
+		},
+		Theme: ThemeConfig{
+			BgColor:      "#191919",
+			TextColor:    "#ebebea",
+			SidebarColor: "#202020",
 		},
 		ModelMap: map[string]string{
 			"opus-4.6":         "avocado-froyo-medium",
@@ -449,12 +466,22 @@ func EnsureAdminPassword(cfg *Config, configPath string) {
 // EnsureApiKey checks if an API key is configured. If not, generates one and
 // writes it back to config.yaml so it persists across restarts.
 func EnsureApiKey(cfg *Config, configPath string) {
-	if cfg.Server.ApiKey != "" {
-		return
+	if cfg.Server.ApiKey == "" {
+		cfg.Server.ApiKey = GenerateApiKey()
+		log.Printf("[config] no api_key configured, generated: %s", cfg.Server.ApiKey)
 	}
 
-	cfg.Server.ApiKey = GenerateApiKey()
-	log.Printf("[config] no api_key configured, generated: %s", cfg.Server.ApiKey)
+	// Ensure primary key is also in the ApiKeys list if not already
+	hasPrimary := false
+	for _, k := range cfg.Server.ApiKeys {
+		if k == cfg.Server.ApiKey {
+			hasPrimary = true
+			break
+		}
+	}
+	if !hasPrimary {
+		cfg.Server.ApiKeys = append([]string{cfg.Server.ApiKey}, cfg.Server.ApiKeys...)
+	}
 
 	// Write the key back to config.yaml
 	if configPath == "" {
@@ -492,11 +519,14 @@ func EnsureApiKey(cfg *Config, configPath string) {
 		}
 		if serverNode == nil {
 			// Add server section
+			apiKeysNode := yamlSeqFromStrings(cfg.Server.ApiKeys)
 			mapping.Content = append(mapping.Content,
 				&yaml.Node{Kind: yaml.ScalarNode, Value: "server"},
 				&yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
 					{Kind: yaml.ScalarNode, Value: "api_key"},
 					{Kind: yaml.ScalarNode, Value: cfg.Server.ApiKey, Tag: "!!str"},
+					{Kind: yaml.ScalarNode, Value: "api_keys"},
+					apiKeysNode,
 				}},
 			)
 		} else {
@@ -516,6 +546,8 @@ func EnsureApiKey(cfg *Config, configPath string) {
 					&yaml.Node{Kind: yaml.ScalarNode, Value: cfg.Server.ApiKey, Tag: "!!str"},
 				)
 			}
+			// Write api_keys list
+			setYAMLStrings(serverNode, "api_keys", cfg.Server.ApiKeys)
 		}
 	}
 
@@ -597,6 +629,22 @@ func (c *Config) AskModeDefault() bool {
 	return *c.Proxy.AskModeDefault
 }
 
+// KeylessEndpoint returns whether API key is required for pool endpoints.
+func (c *Config) KeylessEndpoint() bool {
+	if c == nil {
+		return false
+	}
+	return c.Server.KeylessEndpoint
+}
+
+// ModelsRequireApiKey returns whether /v1/models requires an API key.
+func (c *Config) ModelsRequireApiKey() bool {
+	if c == nil {
+		return true
+	}
+	return c.Server.RequireApiKeyForModels
+}
+
 // NotionProxyURL returns the upstream proxy applied to all notion-bound
 // traffic. Empty string means dial directly. Reads from AppConfig at call
 // time so a /admin/settings PUT takes effect on the next dial without a
@@ -609,3 +657,60 @@ func (c *Config) NotionProxyURL() string {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// yamlSeqFromStrings creates a YAML sequence node from a string slice.
+func yamlSeqFromStrings(items []string) *yaml.Node {
+	node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, s := range items {
+		node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: s, Tag: "!!str"})
+	}
+	return node
+}
+
+// setYAMLStrings sets or creates a string slice field in a YAML mapping node.
+func setYAMLStrings(mapping *yaml.Node, key string, values []string) {
+	for i := 0; i < len(mapping.Content)-1; i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i+1] = yamlSeqFromStrings(values)
+			return
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		yamlSeqFromStrings(values),
+	)
+}
+
+// GetApiKeys returns all API keys (primary + additional).
+func (c *Config) GetApiKeys() []string {
+	if c == nil {
+		return nil
+	}
+	keys := make([]string, 0)
+	if c.Server.ApiKey != "" {
+		keys = append(keys, c.Server.ApiKey)
+	}
+	keys = append(keys, c.Server.ApiKeys...)
+	return keys
+}
+
+// IsValidApiKey checks if the given key matches any configured API key.
+func (c *Config) IsValidApiKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	if c.Server.ApiKey == key {
+		return true
+	}
+	for _, k := range c.Server.ApiKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// SetApiKeys replaces the API keys list (excluding the primary key).
+func (c *Config) SetApiKeys(keys []string) {
+	c.Server.ApiKeys = keys
+}

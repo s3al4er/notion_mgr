@@ -168,6 +168,19 @@ export interface TokenAccountRow {
   count: number
 }
 
+export interface ApiKeyEntry {
+  id: string
+  key: string
+  masked: string
+}
+
+export interface TokenEntry {
+  account_id: string
+  email: string
+  name: string
+  token_v2: string
+}
+
 export interface TokenStats {
   total: TokenBucket
   today: TokenBucket

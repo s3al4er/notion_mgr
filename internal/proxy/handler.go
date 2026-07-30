@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -249,6 +250,55 @@ func HandleAdminModels(pool *AccountPool, auth *DashboardAuth) http.HandlerFunc 
 	}
 }
 
+// HandleAdminModelAliases manages the model name aliases (model_map).
+// GET: list all aliases
+// PUT: replace all aliases
+func HandleAdminModelAliases(configPath string, auth *DashboardAuth) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if auth.HasAdminPassword() && !auth.ValidateSession(r) {
+			http.Error(w, `{"error":"unauthorized, dashboard login required"}`, http.StatusUnauthorized)
+			return
+		}
+
+		switch r.Method {
+		case "GET":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"aliases": SnapshotModelMap(),
+			})
+
+		case "PUT":
+			var body struct {
+				Aliases map[string]string `json:"aliases"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+				return
+			}
+			if body.Aliases == nil {
+				http.Error(w, `{"error":"aliases map is required"}`, http.StatusBadRequest)
+				return
+			}
+
+			// Apply to in-memory map immediately
+			ReplaceModelMap(body.Aliases)
+
+			// Persist to config.yaml
+			if configPath != "" {
+				persistModelMap(configPath)
+			}
+
+			log.Printf("[models] model aliases updated (%d entries)", len(body.Aliases))
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"aliases": SnapshotModelMap(),
+			})
+
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 // HandleAdminSettings handles GET (read) and PUT (update) for dashboard-controlled settings.
 // Settings are persisted to config.yaml using YAML node manipulation to preserve comments.
 func HandleAdminSettings(configPath string, auth *DashboardAuth) http.HandlerFunc {
@@ -264,21 +314,31 @@ func HandleAdminSettings(configPath string, auth *DashboardAuth) http.HandlerFun
 		switch r.Method {
 		case "GET":
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"enable_web_search":       AppConfig.WebSearchEnabled(),
-				"enable_workspace_search": AppConfig.WorkspaceSearchEnabled(),
-				"ask_mode_default":        AppConfig.AskModeDefault(),
-				"disable_notion_prompt":   AppConfig.Proxy.DisableNotionPrompt,
-				"debug_logging":           AppConfig.Server.DebugLogging,
-				"notion_proxy":            AppConfig.NotionProxyURL(),
+				"enable_web_search":         AppConfig.WebSearchEnabled(),
+				"enable_workspace_search":   AppConfig.WorkspaceSearchEnabled(),
+				"ask_mode_default":          AppConfig.AskModeDefault(),
+				"disable_notion_prompt":     AppConfig.Proxy.DisableNotionPrompt,
+				"debug_logging":             AppConfig.Server.DebugLogging,
+				"notion_proxy":              AppConfig.NotionProxyURL(),
+				"keyless_endpoint":          AppConfig.KeylessEndpoint(),
+				"require_api_key_for_models": AppConfig.ModelsRequireApiKey(),
+				"theme_bg_color":            AppConfig.Theme.BgColor,
+				"theme_text_color":          AppConfig.Theme.TextColor,
+				"theme_sidebar_color":       AppConfig.Theme.SidebarColor,
 			})
 
 		case "PUT":
 			var body struct {
-				EnableWebSearch       *bool   `json:"enable_web_search"`
-				EnableWorkspaceSearch *bool   `json:"enable_workspace_search"`
-				AskModeDefault        *bool   `json:"ask_mode_default"`
-				DebugLogging          *bool   `json:"debug_logging"`
-				NotionProxy           *string `json:"notion_proxy"`
+				EnableWebSearch        *bool   `json:"enable_web_search"`
+				EnableWorkspaceSearch  *bool   `json:"enable_workspace_search"`
+				AskModeDefault         *bool   `json:"ask_mode_default"`
+				DebugLogging           *bool   `json:"debug_logging"`
+				NotionProxy            *string `json:"notion_proxy"`
+				KeylessEndpoint        *bool   `json:"keyless_endpoint"`
+				RequireApiKeyForModels *bool   `json:"require_api_key_for_models"`
+				ThemeBgColor           *string `json:"theme_bg_color"`
+				ThemeTextColor         *string `json:"theme_text_color"`
+				ThemeSidebarColor      *string `json:"theme_sidebar_color"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
@@ -331,6 +391,29 @@ func HandleAdminSettings(configPath string, auth *DashboardAuth) http.HandlerFun
 				}
 			}
 
+			if body.KeylessEndpoint != nil {
+				AppConfig.Server.KeylessEndpoint = *body.KeylessEndpoint
+				changed = true
+				log.Printf("[settings] keyless_endpoint → %v", *body.KeylessEndpoint)
+			}
+			if body.RequireApiKeyForModels != nil {
+				AppConfig.Server.RequireApiKeyForModels = *body.RequireApiKeyForModels
+				changed = true
+				log.Printf("[settings] require_api_key_for_models → %v", *body.RequireApiKeyForModels)
+			}
+			if body.ThemeBgColor != nil {
+				AppConfig.Theme.BgColor = *body.ThemeBgColor
+				changed = true
+			}
+			if body.ThemeTextColor != nil {
+				AppConfig.Theme.TextColor = *body.ThemeTextColor
+				changed = true
+			}
+			if body.ThemeSidebarColor != nil {
+				AppConfig.Theme.SidebarColor = *body.ThemeSidebarColor
+				changed = true
+			}
+
 			// Persist to config.yaml
 			if changed && configPath != "" {
 				persistSearchSettings(configPath)
@@ -344,12 +427,17 @@ func HandleAdminSettings(configPath string, auth *DashboardAuth) http.HandlerFun
 			}
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"enable_web_search":       AppConfig.WebSearchEnabled(),
-				"enable_workspace_search": AppConfig.WorkspaceSearchEnabled(),
-				"ask_mode_default":        AppConfig.AskModeDefault(),
-				"disable_notion_prompt":   AppConfig.Proxy.DisableNotionPrompt,
-				"debug_logging":           AppConfig.Server.DebugLogging,
-				"notion_proxy":            AppConfig.NotionProxyURL(),
+				"enable_web_search":         AppConfig.WebSearchEnabled(),
+				"enable_workspace_search":   AppConfig.WorkspaceSearchEnabled(),
+				"ask_mode_default":          AppConfig.AskModeDefault(),
+				"disable_notion_prompt":     AppConfig.Proxy.DisableNotionPrompt,
+				"debug_logging":             AppConfig.Server.DebugLogging,
+				"notion_proxy":              AppConfig.NotionProxyURL(),
+				"keyless_endpoint":          AppConfig.KeylessEndpoint(),
+				"require_api_key_for_models": AppConfig.ModelsRequireApiKey(),
+				"theme_bg_color":            AppConfig.Theme.BgColor,
+				"theme_text_color":          AppConfig.Theme.TextColor,
+				"theme_sidebar_color":       AppConfig.Theme.SidebarColor,
 			})
 
 		default:
@@ -381,6 +469,13 @@ func persistSearchSettings(configPath string) {
 
 		serverNode := getOrCreateYAMLMapping(mapping, "server")
 		setYAMLBool(serverNode, "debug_logging", AppConfig.Server.DebugLogging)
+		setYAMLBool(serverNode, "keyless_endpoint", AppConfig.Server.KeylessEndpoint)
+		setYAMLBool(serverNode, "require_api_key_for_models", AppConfig.Server.RequireApiKeyForModels)
+
+		themeNode := getOrCreateYAMLMapping(mapping, "theme")
+		setYAMLString(themeNode, "bg_color", AppConfig.Theme.BgColor)
+		setYAMLString(themeNode, "text_color", AppConfig.Theme.TextColor)
+		setYAMLString(themeNode, "sidebar_color", AppConfig.Theme.SidebarColor)
 	}
 
 	out, err := yaml.Marshal(&root)
@@ -456,6 +551,302 @@ func setYAMLString(mapping *yaml.Node, key, value string) {
 		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
 		&yaml.Node{Kind: yaml.ScalarNode, Value: value, Tag: "!!str", Style: style},
 	)
+}
+
+// HandleAdminApiKeys manages the API keys.
+// GET: list all keys (masked)
+// POST: generate a new key
+// DELETE: remove a key
+func HandleAdminApiKeys(configPath string, auth *DashboardAuth) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if auth.HasAdminPassword() && !auth.ValidateSession(r) {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		switch r.Method {
+		case "GET":
+			keys := AppConfig.GetApiKeys()
+			masked := make([]map[string]string, len(keys))
+			for i, k := range keys {
+				maskedKey := maskApiKey(k)
+				masked[i] = map[string]string{
+					"id":   fmt.Sprintf("key-%d", i),
+					"key":  k,
+					"masked": maskedKey,
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"keys": masked})
+
+		case "POST":
+			newKey := GenerateApiKey()
+			AppConfig.Server.ApiKeys = append(AppConfig.Server.ApiKeys, newKey)
+			if configPath != "" {
+				persistApiKeys(configPath)
+			}
+			log.Printf("[api-keys] generated new key: %s", maskApiKey(newKey))
+			json.NewEncoder(w).Encode(map[string]string{"key": newKey})
+
+		case "DELETE":
+			var body struct {
+				Key string `json:"key"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Key == "" {
+				http.Error(w, `{"error":"key is required"}`, http.StatusBadRequest)
+				return
+			}
+			if body.Key == AppConfig.Server.ApiKey {
+				http.Error(w, `{"error":"cannot delete the primary API key"}`, http.StatusBadRequest)
+				return
+			}
+			found := false
+			newKeys := make([]string, 0, len(AppConfig.Server.ApiKeys))
+			for _, k := range AppConfig.Server.ApiKeys {
+				if k == body.Key {
+					found = true
+				} else {
+					newKeys = append(newKeys, k)
+				}
+			}
+			if !found {
+				http.Error(w, `{"error":"key not found"}`, http.StatusNotFound)
+				return
+			}
+			AppConfig.Server.ApiKeys = newKeys
+			if configPath != "" {
+				persistApiKeys(configPath)
+			}
+			log.Printf("[api-keys] deleted key: %s", maskApiKey(body.Key))
+			json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func maskApiKey(key string) string {
+	if len(key) <= 10 {
+		return key[:min(len(key), 3)] + "•••"
+	}
+	return key[:7] + "•••" + key[len(key)-4:]
+}
+
+// HandleAdminAccountTokens returns token_v2 for all accounts.
+func HandleAdminAccountTokens(pool *AccountPool, auth *DashboardAuth) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if auth.HasAdminPassword() && !auth.ValidateSession(r) {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		type tokenEntry struct {
+			AccountID string `json:"account_id"`
+			Email     string `json:"email"`
+			Name      string `json:"name"`
+			TokenV2   string `json:"token_v2"`
+		}
+
+		tokens := make([]tokenEntry, 0)
+		pool.ForEach(func(acc *Account) {
+			acc.mu.RLock()
+			tokens = append(tokens, tokenEntry{
+				AccountID: acc.AccountID,
+				Email:     acc.UserEmail,
+				Name:      acc.UserName,
+				TokenV2:   acc.TokenV2,
+			})
+			acc.mu.RUnlock()
+		})
+
+		json.NewEncoder(w).Encode(map[string]interface{}{"tokens": tokens})
+	}
+}
+
+// HandleChangePassword changes the admin password.
+func HandleChangePassword(configPath string, auth *DashboardAuth) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != "POST" {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		if !auth.ValidateSession(r) {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		var body struct {
+			OldPassword string `json:"old_password"`
+			NewPassword string `json:"new_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+		if body.OldPassword == "" || body.NewPassword == "" {
+			http.Error(w, `{"error":"old_password and new_password are required"}`, http.StatusBadRequest)
+			return
+		}
+		if len(body.NewPassword) < 4 {
+			http.Error(w, `{"error":"new password must be at least 4 characters"}`, http.StatusBadRequest)
+			return
+		}
+
+		// Verify old password by comparing hash
+		if !VerifyAdminPassword(auth.adminPasswordHash, body.OldPassword) {
+			http.Error(w, `{"error":"old password is incorrect"}`, http.StatusUnauthorized)
+			return
+		}
+
+		// Hash and save new password
+		newHash := HashAdminPassword(body.NewPassword)
+		auth.adminPasswordHash = newHash
+
+		// Update AppConfig
+		AppConfig.Server.AdminPassword = newHash
+
+		// Persist to config.yaml
+		if configPath != "" {
+			persistAdminPassword(configPath, newHash)
+		}
+
+		log.Printf("[dashboard] admin password changed")
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}
+}
+
+// persistApiKeys writes the current api_keys list to config.yaml.
+func persistApiKeys(configPath string) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("[api-keys] failed to read %s: %v", configPath, err)
+		return
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil || root.Kind == 0 {
+		log.Printf("[api-keys] failed to parse %s: %v", configPath, err)
+		return
+	}
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		mapping := root.Content[0]
+		serverNode := getOrCreateYAMLMapping(mapping, "server")
+		setYAMLStrings(serverNode, "api_keys", AppConfig.Server.ApiKeys)
+	}
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		log.Printf("[api-keys] failed to marshal config: %v", err)
+		return
+	}
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		log.Printf("[api-keys] failed to write %s: %v", configPath, err)
+	}
+}
+
+// persistAdminPassword writes the admin password hash to config.yaml.
+func persistAdminPassword(configPath, hash string) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("[settings] failed to read %s: %v", configPath, err)
+		return
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil || root.Kind == 0 {
+		log.Printf("[settings] failed to parse %s: %v", configPath, err)
+		return
+	}
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		mapping := root.Content[0]
+		serverNode := getOrCreateYAMLMapping(mapping, "server")
+		for i := 0; i < len(serverNode.Content)-1; i += 2 {
+			if serverNode.Content[i].Value == "admin_password" {
+				serverNode.Content[i+1].Value = hash
+				serverNode.Content[i+1].Tag = "!!str"
+				serverNode.Content[i+1].Style = yaml.DoubleQuotedStyle
+				goto write
+			}
+		}
+		serverNode.Content = append(serverNode.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "admin_password"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: hash, Tag: "!!str", Style: yaml.DoubleQuotedStyle},
+		)
+	}
+write:
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		log.Printf("[settings] failed to marshal config: %v", err)
+		return
+	}
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		log.Printf("[settings] failed to write %s: %v", configPath, err)
+	}
+}
+
+// persistModelMap writes the current model alias map to config.yaml.
+func persistModelMap(configPath string) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		log.Printf("[models] failed to read %s: %v", configPath, err)
+		return
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil || root.Kind == 0 {
+		log.Printf("[models] failed to parse %s: %v", configPath, err)
+		return
+	}
+	if root.Kind == yaml.DocumentNode && len(root.Content) > 0 {
+		mapping := root.Content[0]
+		modelMap := SnapshotModelMap()
+		// Find or create model_map node
+		for i := 0; i < len(mapping.Content)-1; i += 2 {
+			if mapping.Content[i].Value == "model_map" {
+				mapNode := mapping.Content[i+1]
+				mapNode.Kind = yaml.MappingNode
+				mapNode.Tag = "!!map"
+				mapNode.Content = nil
+				// Sort keys for deterministic output
+				keys := make([]string, 0, len(modelMap))
+				for k := range modelMap {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					mapNode.Content = append(mapNode.Content,
+						&yaml.Node{Kind: yaml.ScalarNode, Value: k, Tag: "!!str"},
+						&yaml.Node{Kind: yaml.ScalarNode, Value: modelMap[k], Tag: "!!str"},
+					)
+				}
+				goto writeModelMap
+			}
+		}
+		// model_map key not found, create it
+		mapNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		for k, v := range modelMap {
+			mapNode.Content = append(mapNode.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: k, Tag: "!!str"},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: v, Tag: "!!str"},
+			)
+		}
+		mapping.Content = append(mapping.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "model_map"},
+			mapNode,
+		)
+	}
+writeModelMap:
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		log.Printf("[models] failed to marshal config: %v", err)
+		return
+	}
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		log.Printf("[models] failed to write %s: %v", configPath, err)
+	}
 }
 
 // isFreePlan returns true if the account is on a free plan where basic credits (200 lifetime)

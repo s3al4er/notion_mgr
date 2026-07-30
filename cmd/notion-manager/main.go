@@ -16,7 +16,16 @@ import (
 )
 
 func requiresAPIKey(path string) bool {
-	return path == "/models" || strings.HasPrefix(path, "/v1/")
+	if proxy.AppConfig != nil && proxy.AppConfig.KeylessEndpoint() {
+		return false
+	}
+	needsKey := path == "/models" || strings.HasPrefix(path, "/v1/")
+	if needsKey && (path == "/models" || path == "/v1/models") {
+		if proxy.AppConfig != nil && !proxy.AppConfig.ModelsRequireApiKey() {
+			return false
+		}
+	}
+	return needsKey
 }
 
 func apiKeyAuthMiddleware(apiKey string, next http.Handler) http.Handler {
@@ -40,7 +49,7 @@ func apiKeyAuthMiddleware(apiKey string, next http.Handler) http.Handler {
 			http.Error(w, `{"error":{"message":"missing api key, use 'Authorization: Bearer <key>' or 'x-api-key: <key>'","type":"auth_error"}}`, http.StatusUnauthorized)
 			return
 		}
-		if key != apiKey {
+		if proxy.AppConfig == nil || !proxy.AppConfig.IsValidApiKey(key) {
 			http.Error(w, `{"error":{"message":"invalid api key","type":"auth_error"}}`, http.StatusUnauthorized)
 			return
 		}
@@ -48,7 +57,7 @@ func apiKeyAuthMiddleware(apiKey string, next http.Handler) http.Handler {
 	})
 }
 
-func newMux(pool *proxy.AccountPool, accountsDir string, apiKey string, dashAuth *proxy.DashboardAuth, usageStats *proxy.UsageStats, regDeps *proxy.RegisterJobsDeps) *http.ServeMux {
+func newMux(pool *proxy.AccountPool, accountsDir string, apiKey string, configPath string, dashAuth *proxy.DashboardAuth, usageStats *proxy.UsageStats, regDeps *proxy.RegisterJobsDeps) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Anthropic + OpenAI-compatible API endpoints
@@ -65,10 +74,14 @@ func newMux(pool *proxy.AccountPool, accountsDir string, apiKey string, dashAuth
 	mux.HandleFunc("/admin/accounts", proxy.HandleAdminAccounts(pool, dashAuth))
 	mux.HandleFunc("/admin/accounts/add", proxy.HandleAddAccount(pool, accountsDir, dashAuth))
 	mux.HandleFunc("/admin/accounts/delete", proxy.HandleDeleteAccount(pool, accountsDir, dashAuth))
+	mux.HandleFunc("/admin/accounts/tokens", proxy.HandleAdminAccountTokens(pool, dashAuth))
 	mux.HandleFunc("/admin/models", proxy.HandleAdminModels(pool, dashAuth))
+	mux.HandleFunc("/admin/models/aliases", proxy.HandleAdminModelAliases(configPath, dashAuth))
 	mux.HandleFunc("/admin/refresh", proxy.HandleAdminRefresh(pool, accountsDir, dashAuth))
-	mux.HandleFunc("/admin/settings", proxy.HandleAdminSettings("config.yaml", dashAuth))
+	mux.HandleFunc("/admin/settings", proxy.HandleAdminSettings(configPath, dashAuth))
+	mux.HandleFunc("/admin/settings/password", proxy.HandleChangePassword(configPath, dashAuth))
 	mux.HandleFunc("/admin/stats", proxy.HandleAdminStats(usageStats, dashAuth))
+	mux.HandleFunc("/admin/api-keys", proxy.HandleAdminApiKeys(configPath, dashAuth))
 
 	// Bulk Microsoft-SSO registration. The legacy synchronous endpoint is
 	// kept for parity with the dashboard's older "submit + wait" UI; the
@@ -179,6 +192,7 @@ func main() {
 	registry.Register(microsoft.New())
 
 	apiKey := cfg.Server.ApiKey
+	configPath := "config.yaml"
 	dashAuth := proxy.NewDashboardAuth(cfg.Server.AdminPassword, apiKey)
 
 	regDeps := &proxy.RegisterJobsDeps{
@@ -202,7 +216,7 @@ func main() {
 		})
 	}
 
-	mux := newMux(pool, accountsDir, apiKey, dashAuth, usageStats, regDeps)
+	mux := newMux(pool, accountsDir, apiKey, configPath, dashAuth, usageStats, regDeps)
 
 	log.Printf("=== notion-manager ===")
 	log.Printf("Listening on :%s", port)
