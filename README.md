@@ -219,7 +219,7 @@ graph TD
 
 ### Requirements
 
-- Go `1.25+` (or grab a [Release](https://github.com/SleepingBag945/notion_manager/releases) pre-built binary if you want to skip the Go toolchain)
+- Go `1.25+` (or grab a [Release](https://github.com/s3al4er/notion_mgr/releases) pre-built binary if you want to skip the Go toolchain)
 - Chrome or Chromium for the extension workflow (skip if you only use the dashboard "Add account" or bulk register)
 - At least one usable Notion account
 
