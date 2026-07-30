@@ -74,7 +74,7 @@ export OPENAI_BASE_URL=http://localhost:8081/v1
 export OPENAI_API_KEY=<your-api-key>
 ```
 
-Or download a pre-built binary from [Releases](https://github.com/SleepingBag945/notion_manager/releases) — no Go toolchain required.
+Or download a pre-built binary from [Releases](https://github.com/s3al4er/notion_mgr/releases) — no Go toolchain required.
 
 ---
 
