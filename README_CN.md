@@ -74,7 +74,7 @@ export OPENAI_BASE_URL=http://localhost:8081/v1
 export OPENAI_API_KEY=<your-api-key>
 ```
 
-也可以直接从 [Releases](https://github.com/SleepingBag945/notion_manager/releases) 下载预编译二进制，无需 Go 工具链。
+也可以直接从 [Releases](https://github.com/s3al4er/notion_mgr/releases) 下载预编译二进制，无需 Go 工具链。
 
 ---
 
